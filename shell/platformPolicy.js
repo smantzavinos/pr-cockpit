@@ -20,6 +20,8 @@ const PLATFORM_POLICIES = Object.freeze({
   }),
   linux: Object.freeze({
     desktopName: "app.pr-cockpit.desktop",
+    windowClass: "app.pr-cockpit",
+    windowIcon: "icon.png",
     mainWindow: Object.freeze({ titleBarStyle: "hidden", titleBarOverlay: true }),
     paletteWindow: Object.freeze({}),
     trayIcon: "icon.png",

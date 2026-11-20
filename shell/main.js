@@ -20,6 +20,8 @@ app.commandLine.appendSwitch("no-proxy-server");
 app.setName("PR Cockpit");
 const desktopPolicy = platformPolicy();
 if (desktopPolicy.desktopName) app.setDesktopName(desktopPolicy.desktopName);
+if (desktopPolicy.windowClass) app.commandLine.appendSwitch("class", desktopPolicy.windowClass);
+const windowIcon = desktopPolicy.windowIcon && path.join(__dirname, "..", "assets", desktopPolicy.windowIcon);
 const shellApiArguments = ["--cockpit-native-palette", "--cockpit-prepare-editor"];
 
 // Only scripts/cockpit (the installed app) sets COCKPIT_MANAGED; every other launch is an isolated dev instance.
@@ -343,6 +345,7 @@ if (!app.requestSingleInstanceLock()) {
       y: anchor ? anchor.y + 34 : undefined,
       backgroundColor: windowBackgroundColor(),
       ...desktopPolicy.mainWindow,
+      ...(windowIcon ? { icon: windowIcon } : {}),
       webPreferences: { sandbox: true, plugins: true, preload: path.join(__dirname, "preload.js"), additionalArguments: shellApiArguments },
       show: false,
     });
@@ -578,6 +581,7 @@ if (!app.requestSingleInstanceLock()) {
       height: 900,
       backgroundColor: windowBackgroundColor(),
       ...desktopPolicy.mainWindow,
+      ...(windowIcon ? { icon: windowIcon } : {}),
       webPreferences: { sandbox: true, plugins: true, preload: path.join(__dirname, "preload.js"), additionalArguments: shellApiArguments },
       show: false,
     });

@@ -42,10 +42,12 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [ nodejs_22 makeWrapper copyDesktopItems ];
   desktopItems = [
     (makeDesktopItem {
-      name = "pr-cockpit";
+      # Keep the desktop file ID and StartupWMClass aligned with shell/platformPolicy.js.
+      name = "app.pr-cockpit";
       desktopName = "PR Cockpit";
       exec = "pr-cockpit-desktop";
-      icon = "pr-cockpit";
+      icon = "app.pr-cockpit";
+      startupWMClass = "app.pr-cockpit";
       categories = [ "Development" ];
     })
   ];
@@ -61,14 +63,14 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     app="$out/libexec/pr-cockpit"
-    mkdir -p "$app/scripts" "$app/ui/src" "$out/bin" "$out/share/icons/hicolor/512x512/apps"
+    mkdir -p "$app/scripts" "$app/ui/src" "$out/bin"
     cp -r server shared shell assets static "$app/"
     # The backend also imports shared helpers under ui/src/lib.
     cp -r ui/src/lib "$app/ui/src/"
     cp scripts/{pr-cockpit,private-bun.sh} "$app/scripts/"
     install -Dm644 LICENSE "$out/share/licenses/pr-cockpit/LICENSE"
     ln -s ${deps}/node_modules "$app/node_modules"
-    install -m644 assets/icon.png "$out/share/icons/hicolor/512x512/apps/pr-cockpit.png"
+    install -Dm644 assets/icon.svg "$out/share/icons/hicolor/scalable/apps/app.pr-cockpit.svg"
 
     wrap() {
       makeWrapper ${bash}/bin/bash "$out/bin/$1" \
