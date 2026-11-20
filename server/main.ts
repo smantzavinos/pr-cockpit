@@ -4,22 +4,12 @@ import { db, failInterruptedMutations, prIsOpen, startCacheRetention } from "./d
 import { kickWorker, recoverRefreshingMutations } from "./mutations.ts";
 import { seedSettings } from "./settings.ts";
 import { startPoller } from "./poller.ts";
-import { startDaemonWatch } from "./daemonWatch.ts";
-import { startRelayClient } from "./relayClient.ts";
-import { startUpdateCheck } from "./version.ts";
-import { startFixerSupervision } from "./agents.ts";
-import { startForwarders } from "./forwarders.ts";
-import { startWebhooks } from "./webhooks.ts";
+import { githubOnlyFetch } from "./githubNetwork.ts";
 import { buildFetchHandler } from "./http.ts";
 import { installMockNetworkGuard, isMockGithub, seedMockDatabase } from "./mockGithub.ts";
-import { mergeRendererOrigins, startCockpitServer } from "./cockpitServer.ts";
-import { ensureOmpInstalled } from "./commitMessage.ts";
+import { startCockpitServer } from "./cockpitServer.ts";
 import { startPrWorktreePruning } from "./mirror.ts";
-import { replicaEnabled, startReplicaSync } from "./replica.ts";
-import { captureFatal, startSentry } from "./sentry.ts";
-import { startTailscaleServe } from "./tailscaleServe.ts";
 import { conflictingSupervisor } from "./supervisor.ts";
-import { startUsageStats } from "./usageStats.ts";
 
 const port = Number(Bun.env.COCKPIT_PORT ?? 4820);
 const supervisorConflict = conflictingSupervisor(port);
@@ -29,47 +19,29 @@ if (supervisorConflict) {
 }
 
 try {
+  // Subprocesses that read GitHub must not silently route through an ambient HTTP proxy.
+  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) delete process.env[key];
+  globalThis.fetch = githubOnlyFetch(globalThis.fetch);
   installMockNetworkGuard();
-  if (!isMockGithub) startSentry();
   seedSettings();
   if (isMockGithub) {
     if (!Bun.env.COCKPIT_DATA_DIR) throw new Error("COCKPIT_MOCK requires an explicit COCKPIT_DATA_DIR");
     seedMockDatabase(db, Bun.env.COCKPIT_DATA_DIR);
-  } else if (replicaEnabled()) {
-    await startReplicaSync();
   } else {
     failInterruptedMutations();
     await recoverRefreshingMutations();
     kickWorker();
   }
 
-  const fetchHandler = buildFetchHandler(port);
-  // Serve is opt-in and best-effort; a missing binary or failed publish must not block loopback.
-  const serve = await startTailscaleServe(port, isMockGithub ? { enabled: false } : {});
-  startCockpitServer(port, fetchHandler, mergeRendererOrigins(Bun.env.COCKPIT_ALLOWED_ORIGINS, serve.origin));
+  startCockpitServer(port, buildFetchHandler(port));
 
-  if (!isMockGithub && !replicaEnabled()) {
-    startUsageStats();
-    startForwarders(port);
+  if (!isMockGithub) {
     startPoller();
-    startDaemonWatch();
-    startRelayClient();
-    startFixerSupervision();
-    void ensureOmpInstalled().catch((error) => console.error("background OMP installation failed:", error));
-    startWebhooks();
     startPrWorktreePruning(prIsOpen);
-  }
-  if (!isMockGithub) startCacheRetention();
-  if (!isMockGithub) startUpdateCheck();
-
-  if (serve.enabled && serve.error) {
-    console.error(`pr-cockpit: Tailscale Serve failed (${serve.error}); loopback server is still running on http://127.0.0.1:${port}`);
-  } else if (serve.origin) {
-    console.log(`pr-cockpit: Tailscale Serve ${serve.origin} → http://127.0.0.1:${port}`);
+    startCacheRetention();
   }
   console.log(`pr-cockpit server listening on http://127.0.0.1:${port} (pid ${process.pid})`);
 } catch (err) {
   console.error(`pr-cockpit server failed to start on http://127.0.0.1:${port} (pid ${process.pid}):`, err);
-  await captureFatal(err);
   process.exit(1);
 }

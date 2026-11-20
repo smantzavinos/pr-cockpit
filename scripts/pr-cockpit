@@ -110,13 +110,17 @@ EOF
 cockpit_port() {
   local config_file="$HOME/.config/pr-cockpit/config"
   local env_port="${COCKPIT_PORT:-}"
-  if [[ -f "$config_file" ]]; then
+  if [[ -z "${COCKPIT_PACKAGE_ROOT:-}" && -f "$config_file" ]]; then
     # shellcheck disable=SC1090
     source "$config_file"
   fi
   printf '%s\n' "${env_port:-${COCKPIT_PORT:-4820}}"
 }
 cockpit_bun() {
+  if [[ -n "${COCKPIT_PACKAGE_ROOT:-}" ]]; then
+    command -v bun
+    return
+  fi
   local private
   private=$(private_bun) || return 1
   printf '%s\n' "${private:-$(command -v bun || true)}"
@@ -419,7 +423,7 @@ env_port="${COCKPIT_PORT:-}"
 env_data_dir="${COCKPIT_DATA_DIR:-}"
 env_proxy="${COCKPIT_PROXY:-}"
 env_proxy_port="${COCKPIT_PROXY_PORT:-}"
-if [[ -f "$config_file" ]]; then
+if [[ -z "${COCKPIT_PACKAGE_ROOT:-}" && -f "$config_file" ]]; then
   # shellcheck disable=SC1090
   source "$config_file"
 fi

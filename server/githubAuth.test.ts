@@ -66,6 +66,12 @@ fi
       expect(await githubAuthStatus(["repo"])).toMatchObject({ state: "missing-auth", missingScopes: ["repo"] });
 
       process.env.GH_TEST_MODE = "ready";
+      expect(await githubAuthStatus()).toMatchObject({
+        ok: true,
+        state: "ready",
+        login: "octocat",
+        requiredScopes: ["repo"],
+      });
       expect(await githubAuthStatus(["repo", "workflow"])).toMatchObject({
         state: "missing-scopes",
         login: "octocat",

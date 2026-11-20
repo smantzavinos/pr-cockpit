@@ -3021,7 +3021,7 @@ function isWorkflowScopeError(path: string, error: unknown): boolean {
 const AUTH_SCOPE_ALLOWED: Record<string, true> = { repo: true, workflow: true };
 
 function requestedAuthScopes(value: unknown): string[] | null {
-  if (value === undefined) return ["repo", "workflow"];
+  if (value === undefined) return ["repo"];
   if (!Array.isArray(value) || value.length === 0) return null;
   const scopes = [...new Set(value)];
   return scopes.every((scope) => typeof scope === "string" && AUTH_SCOPE_ALLOWED[scope]) ? scopes.sort() as string[] : null;
@@ -4161,6 +4161,10 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
   async function route(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const parts = url.pathname.split("/").filter(Boolean);
+    if (/^\/api\/(?:quick-generate|ask|commit-message|tmux|replica)(?:\/|$)/.test(url.pathname)
+      || /^\/api\/(?:agents\/(?:prompt|autofix|custom)|github-app\/(?:start|callback)|relay\/coverage)$/.test(url.pathname)) {
+      return json({ error: "Not available in the GitHub-only edition" }, 403);
+    }
     if (isMockGithub && url.pathname === "/api/image") {
       return handleMockImage(url, req.headers.get("range"));
     }
@@ -4799,7 +4803,16 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
       const cacheControl = /^\/assets\/.+-[\w-]{8,}\./.test(url.pathname)
         ? "public, max-age=31536000, immutable"
         : "no-cache";
-      return new Response(staticFile, { headers: { "Cache-Control": cacheControl } });
+      const headers = new Headers({ "Cache-Control": cacheControl });
+      if (url.pathname === "/" || url.pathname === "/index.html") {
+        headers.set("Content-Security-Policy", [
+          "default-src 'self'", "base-uri 'none'", "object-src 'none'", "frame-src 'none'",
+          "img-src 'self' data: blob: https://avatars.githubusercontent.com",
+          "media-src 'self' blob:", "style-src 'self' 'unsafe-inline'",
+          "connect-src 'self' ws://127.0.0.1:* ws://localhost:*",
+        ].join("; "));
+      }
+      return new Response(staticFile, { headers });
     }
 
     return new Response("not found", { status: 404 });

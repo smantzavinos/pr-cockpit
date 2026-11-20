@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$root"
+
+# Keep the dev instance away from existing Cockpit services and databases.
+export COCKPIT_PORT="${COCKPIT_PORT:-4899}"
+export COCKPIT_DATA_DIR="${COCKPIT_DATA_DIR:-$root/.scratch/dev-data}"
+export COCKPIT_MANAGED=0
+export GH_NO_UPDATE_NOTIFIER=1
+export GH_NO_EXTENSION_UPDATE_NOTIFIER=1
+
+command="${1:-help}"
+if (( $# > 0 )); then shift; fi
+
+case "$command" in
+  deps)
+    bun install --frozen-lockfile
+    (cd ui && bun install --frozen-lockfile)
+    # Linux uses Electron from nixpkgs; the macOS shell needs its native bridges.
+    if [[ "$(uname -s)" == Darwin ]]; then
+      (cd shell && bun install --frozen-lockfile)
+    fi
+    ;;
+  build)
+    cd ui
+    exec bun run build "$@"
+    ;;
+  test)
+    exec bun test "$@"
+    ;;
+  server)
+    exec bun server/main.ts "$@"
+    ;;
+  ui)
+    cd ui
+    exec bun run dev --host 127.0.0.1 "$@"
+    ;;
+  desktop)
+    if [[ "$(uname -s)" == Darwin ]]; then
+      electron="$root/shell/node_modules/.bin/electron"
+    else
+      electron="$(command -v electron || true)"
+    fi
+    if [[ -z "$electron" || ! -x "$electron" ]]; then
+      echo 'Electron not found: use nix develop (Linux) or run scripts/dev deps (macOS).' >&2
+      exit 1
+    fi
+    export COCKPIT_URL="http://127.0.0.1:$COCKPIT_PORT"
+    if ! curl --noproxy '*' -fsS --max-time 2 "$COCKPIT_URL/healthz" >/dev/null; then
+      echo 'Start scripts/dev server before launching the desktop.' >&2
+      exit 1
+    fi
+    unset ELECTRON_RUN_AS_NODE
+    exec "$electron" "$root/shell" "$@"
+    ;;
+  help|-h|--help)
+    echo 'Usage: scripts/dev {deps|build|test|server|ui|desktop}'
+    ;;
+  *)
+    echo "Unknown dev command: $command" >&2
+    exit 2
+    ;;
+esac

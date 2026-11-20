@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { mockGithub } from "./mockGithub.ts";
 import { mockScreenshotSvg } from "./mockImages.ts";
 import { extractGithubMedia, GITHUB_MEDIA_HOSTS } from "./githubMedia.ts";
@@ -6,18 +6,6 @@ import { createConcurrencyLimit } from "./concurrency.ts";
 import { ghToken } from "./github.ts";
 
 const CACHE_BYTES_PER_KIND = 2 * 1024 * 1024 * 1024;
-
-const ghImgBin =
-  Bun.env.COCKPIT_GH_IMG ??
-  [`${Bun.env.HOME}/.local/share/gh/extensions/gh-img/gh-img`, `${Bun.env.HOME}/dev/gh-img/gh-img`].find((p) => {
-    try {
-      accessSync(p, constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  }) ??
-  "gh-img";
 
 const dataDir = Bun.env.COCKPIT_DATA_DIR ?? "data";
 const imageCacheDir = `${dataDir}/images`;
@@ -45,18 +33,6 @@ function isHtml(bytes: Uint8Array): boolean {
   return /^\s*(?:<!doctype\s+html\b|<html\b)/i.test(new TextDecoder().decode(bytes.subarray(0, 512)));
 }
 
-function ghImgAvailable(): boolean {
-  if (!ghImgBin.includes("/")) return Bun.which(ghImgBin) !== null;
-  try {
-    accessSync(ghImgBin, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// github.com answers an authenticated attachment request with a signed redirect into its asset bucket.
-const GITHUB_ASSET_BUCKET_RE = /^github-production-user-asset-[0-9a-f]+\.s3\.amazonaws\.com$/;
 // Private repository files under github.com/<owner>/<repo>/raw/… need a browser session and answer a token with 404;
 // raw.githubusercontent.com serves the same file to the token.
 const GITHUB_REPO_RAW_RE = /^\/([^/]+)\/([^/]+)\/(?:raw\/(.+)|blob\/(.+))$/;
@@ -77,9 +53,8 @@ export async function fetchAllowedImage(raw: string, fetcher: typeof fetch = fet
   }
   if (token) target = tokenRawUrl(target);
   for (let redirect = 0; redirect < 4; redirect++) {
-    const allowed = GITHUB_MEDIA_HOSTS.has(target.host) || (redirect > 0 && GITHUB_ASSET_BUCKET_RE.test(target.host));
-    if (target.protocol !== "https:" || !allowed) return null;
-    // Only GitHub's own hosts get the token; the signed bucket URL must not carry other credentials.
+    if (target.protocol !== "https:" || !GITHUB_MEDIA_HOSTS.has(target.host)) return null;
+    // A GitHub attachment can redirect off GitHub; do not follow that redirect.
     const authorized = token && (target.host === "github.com" || target.host === "raw.githubusercontent.com");
     const headers: Record<string, string> = authorized ? { accept: "image/*", authorization: `Bearer ${token}` } : { accept: "image/*" };
     const response = await fetcher(target, { redirect: "manual", headers });
@@ -210,23 +185,7 @@ async function loadImage(raw: string): Promise<ImageResult> {
   }
   if (fetched) return { file: await storeCached(key, fetched) };
 
-  if (!ghImgAvailable()) {
-    return { error: "gh-img get unavailable", status: 501 };
-  }
-
-  const proc = Bun.spawn([ghImgBin, "get", raw], { stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).arrayBuffer(),
-    new Response(proc.stderr).text(),
-  ]);
-  const code = await proc.exited;
-  if (code !== 0) {
-    return { error: stderr || `gh-img get exited ${code}`, status: 502 };
-  }
-
-  const bytes = new Uint8Array(stdout);
-  if (isHtml(bytes)) return { error: "GitHub returned a sign-in page instead of media; authorize the selected browser's SSO session", status: 502 };
-  return { file: await storeCached(key, bytes) };
+  return { error: "Media unavailable from a GitHub host", status: 502 };
 }
 
 // Videos keep their own budget so one large recording cannot evict every cached image.

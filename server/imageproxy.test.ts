@@ -27,7 +27,7 @@ test("native image fetch follows only allowed GitHub redirects", async () => {
   ))).toBeNull();
 });
 
-test("a token reaches only github.com and unlocks its signed attachment redirect", async () => {
+test("a signed attachment redirect does not permit traffic to an external storage host", async () => {
   const seen: Array<[string, string | null]> = [];
   const asset = "https://github-production-user-asset-6210df.s3.amazonaws.com/1/2.png?X-Amz-Signature=abc";
   const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
@@ -38,10 +38,9 @@ test("a token reaches only github.com and unlocks its signed attachment redirect
       : new Response(png);
   };
   const raw = "https://github.com/user-attachments/assets/0000aaaa-0000-0000-0000-000000000001";
-  expect(await fetchAllowedImage(raw, fetcher as typeof fetch, "secret")).toEqual(png);
-  expect(seen).toEqual([[raw, "Bearer secret"], [asset, null]]);
-  // The bucket is reachable only through a github.com redirect, never as a requested URL.
+  expect(await fetchAllowedImage(raw, fetcher as typeof fetch, "secret")).toBeNull();
   expect(await fetchAllowedImage(asset, fetcher as typeof fetch, "secret")).toBeNull();
+  expect(seen).toEqual([[raw, "Bearer secret"]]);
 });
 
 test("a token fetches a private repository's github.com raw file from raw.githubusercontent.com", async () => {
@@ -190,7 +189,7 @@ test("failed image requests do not poison subsequent downloads", async () => {
     const recovered = await handleImage(url);
     console.log(JSON.stringify({ failed: failed.status, recovered: recovered.status, bytes: Array.from(new Uint8Array(await recovered.arrayBuffer())) }));
   `);
-  expect(result).toEqual({ failed: 501, recovered: 200, bytes: Array.from(png) });
+  expect(result).toEqual({ failed: 502, recovered: 200, bytes: Array.from(png) });
 });
 
 test("cached sign-in HTML is replaced by the authenticated image", async () => {

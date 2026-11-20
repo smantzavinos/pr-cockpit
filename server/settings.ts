@@ -159,9 +159,7 @@ export function normalizeReplicaSshHost(value: unknown): string {
 }
 
 export function configuredReplicaSshHost(): string {
-  if (Bun.env.COCKPIT_REPLICA_OVERRIDE === "1") return normalizeReplicaSshHost(envReplicaSshHost);
-  const stored = getSetting("replica_ssh_host");
-  return normalizeReplicaSshHost(stored === null ? envReplicaSshHost : stored);
+  return "";
 }
 
 export function seedSettings(): void {
@@ -235,29 +233,24 @@ export function seedSettings(): void {
 }
 
 export function cockpitWebhooksEnabled(): boolean {
-  return getSetting("cockpit_webhooks") === "true";
+  return false;
 }
 
-export const DEFAULT_RELAY_URL = "https://relay.prcockpit.com";
-const LEGACY_RELAY_URL = "https://pr-cockpit-relay.theodor-lundqvist.workers.dev";
+export const DEFAULT_RELAY_URL = "";
 export const RELAY_APP_SLUG = "pr-cockpit-webhook-relay";
 export const RELAY_APP_INSTALL_URL = `https://github.com/apps/${RELAY_APP_SLUG}/installations/new`;
 
-// explicit empty-string setting means relay off — only null falls through to env/default
+// A copied upstream database or environment must not re-enable external services.
 export function relayConfig(): { url: string } {
-  const url = (getSetting("relay_url") ?? Bun.env.COCKPIT_RELAY_URL ?? DEFAULT_RELAY_URL).replace(/\/+$/, "");
-  return { url: url === LEGACY_RELAY_URL ? DEFAULT_RELAY_URL : url };
+  return { url: DEFAULT_RELAY_URL };
 }
 
-// The environment's opt-out wins over the stored choice.
 export function usageStatsForcedOff(): boolean {
-  const flag = Bun.env.COCKPIT_USAGE_STATS?.trim().toLowerCase();
-  return flag === "0" || flag === "off" || flag === "false" || Bun.env.DO_NOT_TRACK === "1";
+  return true;
 }
 
-// Error reports are opt-in; an explicitly empty COCKPIT_SENTRY_DSN wins over the stored choice.
 export function errorReportsForcedOff(): boolean {
-  return Bun.env.COCKPIT_SENTRY_DSN === "";
+  return true;
 }
 
 export function errorReportsEnabled(): boolean {
@@ -469,7 +462,7 @@ export function readSettings(): Settings {
     keybind_open_palette: getSetting("keybind_open_palette") ?? "",
     saved_views: getSetting("saved_views") ?? "[]",
     repo_roots: getSetting("repo_roots") ?? envRepoRoots,
-    cockpit_webhooks: getSetting("cockpit_webhooks") === "true",
+    cockpit_webhooks: cockpitWebhooksEnabled(),
     pending_reviews_enabled: pendingReviewsEnabled(),
     description_unread_dots: onUnlessOff("description_unread_dots"),
     inbox_labels: normalizeInboxLabels(getSetting("inbox_labels")),
@@ -486,18 +479,18 @@ export function readSettings(): Settings {
     hidden_review_paths: readHiddenReviewPaths(),
     agent_conversations_enabled: onUnlessOff("agent_conversations_enabled"),
     rest_fallback_enabled: restFallbackEnabled(),
-    quick_generate_enabled: quickGenerateEnabled(),
+    quick_generate_enabled: false,
     quick_generate_key: getSetting("quick_generate_key") ?? "",
     quick_generate_model: getSetting("quick_generate_model") ?? "",
     quick_generate_env_file: getSetting("quick_generate_env_file") ?? "",
-    ask_view_enabled: askViewEnabled(),
+    ask_view_enabled: false,
     personal_quick_actions: getSetting("personal_quick_actions") ?? "",
     pr_grouping: readPrGrouping(),
     agent_harness: normalizeHarness(getSetting("agent_harness")),
     relay_url: relayConfig().url,
-    usage_stats: getSetting("usage_stats") !== "off",
+    usage_stats: false,
     usage_stats_forced_off: usageStatsForcedOff(),
-    error_reports: getSetting(ERROR_REPORTS_SETTING) === "on",
+    error_reports: errorReportsEnabled(),
     error_reports_forced_off: errorReportsForcedOff(),
     notifications: notificationSettings(),
   };

@@ -1,11 +1,10 @@
-const { app, BrowserWindow, shell, Menu, globalShortcut, Tray, nativeTheme, systemPreferences, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, shell, Menu, globalShortcut, Tray, nativeTheme, systemPreferences, ipcMain, dialog, session } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const { spawn, execSync } = require("child_process");
+const { execSync } = require("child_process");
 const { windowBoundsForPersistence, windowBoundsForRestore } = require("./windowBounds");
 const { finishEditorSession, runEditorSession } = require("./editorLaunch");
-const { launchSetupTerminal } = require("./setupLaunch");
 const { getNativePalette } = require("./nativePalette");
 const { configuredShortcuts, platformPolicy } = require("./platformPolicy");
 const { deepLinkHash, protocolAction, protocolArgFromArgv } = require("./protocolArgv");
@@ -14,6 +13,10 @@ const { attachTrackpadNavigation } = require("./trackpadNavigation");
 const { createSelectionCapture, createSelectionOpener } = require("./selectedText");
 const { createPanelOpenEvent } = require("./panelOpenEvent");
 const { recordPerformanceProfile } = require("./profile");
+const { isGithubUrl } = require("../shared/githubNetwork.cjs");
+
+app.commandLine.appendSwitch("disable-background-networking");
+app.commandLine.appendSwitch("no-proxy-server");
 app.setName("PR Cockpit");
 const desktopPolicy = platformPolicy();
 if (desktopPolicy.desktopName) app.setDesktopName(desktopPolicy.desktopName);
@@ -22,7 +25,9 @@ const shellApiArguments = ["--cockpit-native-palette", "--cockpit-prepare-editor
 // Only scripts/cockpit (the installed app) sets COCKPIT_MANAGED; every other launch is an isolated dev instance.
 const isManaged = process.env.COCKPIT_MANAGED === "1";
 if (!isManaged) {
-  app.setPath("userData", app.getPath("userData") + "-dev");
+  app.setPath("userData", process.env.COCKPIT_DATA_DIR
+    ? path.join(process.env.COCKPIT_DATA_DIR, "desktop")
+    : app.getPath("userData") + "-dev");
   console.log("pr-cockpit: dev instance — isolated userData, no protocol/shortcut registration, temp data dir");
 }
 
@@ -51,7 +56,36 @@ function modeFromUrl(urlStr) {
 // from being shown later. This is an application-only launch instruction.
 const startHidden = process.argv.includes("--cockpit-hidden");
 const initialUrl = cockpitUrlFromArgv(process.argv) || process.env.COCKPIT_URL || "http://127.0.0.1:4820";
-const serverOrigin = new URL(initialUrl).origin;
+const serverUrl = new URL(initialUrl);
+if (serverUrl.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(serverUrl.hostname)
+  || serverUrl.username || serverUrl.password) {
+  throw new Error("PR Cockpit requires a loopback backend");
+}
+const serverOrigin = serverUrl.origin;
+const socketOrigin = serverOrigin.replace(/^http:/, "ws:");
+
+function isCockpitUrl(value) {
+  try { return new URL(value).origin === serverOrigin; } catch { return false; }
+}
+
+const protectedSessions = new WeakSet();
+function protectSession(browserSession) {
+  if (protectedSessions.has(browserSession)) return;
+  protectedSessions.add(browserSession);
+  browserSession.webRequest.onBeforeRequest(({ url }, callback) => {
+    const origin = new URL(url).origin;
+    callback({ cancel: origin !== serverOrigin && origin !== socketOrigin && !isGithubUrl(url) });
+  });
+}
+app.on("session-created", protectSession);
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-navigate", (event, url) => { if (!isCockpitUrl(url)) event.preventDefault(); });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isGithubUrl(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+});
+
 const paletteUrl = `${serverOrigin}/#/palette`;
 const quickGenerateUrl = `${serverOrigin}/#/quick-generate`;
 const DEFAULT_OPEN_APP = desktopPolicy.shortcuts.openApp;
@@ -220,8 +254,6 @@ function broadcastNativePalette() {
   }
 }
 
-let updating = false;
-
 function quitPrCockpit() {
   app.quit();
 }
@@ -266,7 +298,6 @@ if (!app.requestSingleInstanceLock()) {
   let mainReady = false;
   let pendingFlashMessage = null;
   let mainLoadFailed = false;
-  let handingOff = false;
   let zoomLevel = loadZoomLevel();
   // Keep Dock transitions edge-triggered. Repeating app.dock.show() while the
   // launcher, tray, or global shortcut all try to reveal the app makes the
@@ -324,10 +355,6 @@ if (!app.requestSingleInstanceLock()) {
     });
     extra.webContents.on("did-finish-load", () => {
       extra.webContents.zoomLevel = zoomLevel;
-    });
-    extra.webContents.setWindowOpenHandler(({ url }) => {
-      shell.openExternal(url);
-      return { action: "deny" };
     });
     extra.on("swipe", (event, direction) => {
       const history = extra.webContents.navigationHistory;
@@ -457,22 +484,8 @@ if (!app.requestSingleInstanceLock()) {
       event.preventDefault();
       const action = protocolAction(url);
       if (!action) return;
-      if (isManaged) {
-        if (action.type === "focus-main") showMainWindow();
-        else openDeepLink(url);
-        return;
-      }
-      handingOff = true;
-      const installedLauncher = path.join(os.homedir(), "Library", "Application Support", "PR Cockpit", "launch");
-      const usesInstalledLauncher = !process.env.COCKPIT_LAUNCHER && fs.existsSync(installedLauncher);
-      const cockpit =
-        process.env.COCKPIT_LAUNCHER || (usesInstalledLauncher ? installedLauncher : path.join(__dirname, "..", "scripts", "cockpit"));
-      const env = usesInstalledLauncher
-        ? { ...process.env, COCKPIT_ROOT: path.join(__dirname, ".."), COCKPIT_LAUNCHER: cockpit, COCKPIT_NO_BUILD: "1" }
-        : process.env;
-      const args = action.type === "open-pr" ? [`${action.owner}/${action.repo}#${action.number}`] : [];
-      spawn(cockpit, args, { detached: true, stdio: "ignore", env }).unref();
-      quitPrCockpit();
+      if (action.type === "focus-main") showMainWindow();
+      else openDeepLink(url);
     });
   }
 
@@ -505,54 +518,6 @@ if (!app.requestSingleInstanceLock()) {
     quitPrCockpit();
   }
 
-  function showUpdateFailed(reason) {
-    if (win && !win.isDestroyed()) {
-      win.webContents
-        .executeJavaScript(`window.cockpitFlash && window.cockpitFlash(${JSON.stringify("Update failed: " + reason)})`)
-        .catch(() => {});
-    }
-  }
-
-  function updateAndRestart() {
-    if (updating) return;
-    updating = true;
-    flushPendingBoundsSave();
-    const updateScript = path.join(__dirname, "..", "scripts", "update");
-    const child = spawn(updateScript, [], {
-      cwd: path.join(__dirname, ".."),
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      ...(process.platform === "linux" ? { env: { ...process.env, COCKPIT_UPDATE_GUI: "1" } } : {}),
-    });
-    let handedOff = false;
-    let stdout = "";
-    let stderr = "";
-    // Quit only once the pull succeeded; a failed pull keeps the app running and surfaces the error.
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-      if (!handedOff && stdout.includes("PULL_OK")) {
-        handedOff = true;
-        // The updater has staged a complete replacement and owns relaunch from here.
-        app.exit(0);
-      }
-    });
-    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
-    child.once("error", (err) => {
-      if (handedOff) return;
-      console.error("pr-cockpit: failed to spawn update script", err);
-      updating = false;
-      showUpdateFailed(err.message);
-    });
-    child.once("exit", (code) => {
-      if (handedOff) return;
-      updating = false;
-      if (code === 0) return;
-      const match = stderr.match(/UPDATE_FAILED (.*)/);
-      showUpdateFailed(match ? match[1].trim() : "update failed");
-    });
-    child.unref();
-  }
-
   // Cmd+Q is handled by the custom Hide PR Cockpit menu action. All actual
   // macOS Quit commands (the app menu, Dock, and tray) should still terminate.
   app.on("before-quit", () => {
@@ -578,7 +543,8 @@ if (!app.requestSingleInstanceLock()) {
       }
       return;
     }
-    const url = cockpitUrlFromArgv(argv);
+    const candidateUrl = cockpitUrlFromArgv(argv);
+    const url = candidateUrl && isCockpitUrl(candidateUrl) ? candidateUrl : null;
     if (!win || win.isDestroyed()) {
       if (url) pendingMainUrl = url;
       pendingMainShow = true;
@@ -598,7 +564,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("window-all-closed", () => {});
 
   app.whenReady().then(async () => {
-    if (handingOff) return;
+    protectSession(session.defaultSession);
     if (process.platform === "darwin") {
       if (startHidden) hideDockIcon();
       else showDockIcon();
@@ -686,23 +652,8 @@ if (!app.requestSingleInstanceLock()) {
       if (typeof sessionId !== "string" || sessionId.length > 64) return { error: "bad editor session" };
       return finishEditorSession(sessionId);
     });
-    ipcMain.handle("cockpit:open-setup", async (_event, action) => {
-      if (!win || win.isDestroyed()) return { error: "setup launch failed: no cockpit window" };
-      return launchSetupTerminal(action, win.getBounds(), process.env, process.platform, process.env.COCKPIT_REPLICA_SSH_HOST || "");
-    });
-    ipcMain.handle("cockpit:install-git", async () => {
-      if (process.platform !== "darwin") {
-        await shell.openExternal("https://git-scm.com/downloads");
-        return { ok: true };
-      }
-      return new Promise((resolve) => {
-        const installer = spawn("/usr/bin/xcode-select", ["--install"], { stdio: ["ignore", "ignore", "pipe"] });
-        let stderr = "";
-        installer.stderr.on("data", (chunk) => (stderr += chunk));
-        installer.once("error", (error) => resolve({ error: `Git installer failed: ${error.message}` }));
-        installer.once("exit", (code) => resolve(code === 0 ? { ok: true } : { error: stderr.trim() || "Git installer did not open" }));
-      });
-    });
+    ipcMain.handle("cockpit:open-setup", () => ({ error: "Agent setup is unavailable in the GitHub-only edition." }));
+    ipcMain.handle("cockpit:install-git", () => ({ error: "Start PR Cockpit from nix develop, which provides Git." }));
     ipcMain.handle("cockpit:open-data-folder", async () => {
       const error = await shell.openPath(dataDir);
       return error ? { error } : { ok: true };
@@ -740,7 +691,6 @@ if (!app.requestSingleInstanceLock()) {
           click: showMainWindow,
         },
         { type: "separator" },
-        ...(desktopPolicy.menu.canUpdate ? [{ label: desktopPolicy.menu.updateLabel, click: updateAndRestart }] : []),
         ...(desktopPolicy.menu.canStopServer
           ? [
               { label: desktopPolicy.menu.stopServerLabel, click: killServerAndQuit },
@@ -789,10 +739,6 @@ if (!app.requestSingleInstanceLock()) {
     });
     win.webContents.on("render-process-gone", reloadMain);
 
-    win.webContents.setWindowOpenHandler(({ url }) => {
-      shell.openExternal(url);
-      return { action: "deny" };
-    });
 
     win.webContents.on("did-navigate-in-page", async (event, url) => {
       applyShortcuts();

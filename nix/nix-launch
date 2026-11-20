@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode=$1
+shift
+app=${COCKPIT_PACKAGE_ROOT:?}
+export COCKPIT_PORT=${COCKPIT_PORT:-4898}
+export COCKPIT_DATA_DIR=${COCKPIT_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/pr-cockpit-nix}
+export COCKPIT_MANAGED=0 COCKPIT_URL="http://127.0.0.1:$COCKPIT_PORT"
+export GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_UPDATE_NOTIFIER=1
+unset COCKPIT_PROXY COCKPIT_PROXY_PORT ELECTRON_RUN_AS_NODE
+
+case "$mode" in
+  cli)
+    if [[ ${1:-} == update ]]; then
+      echo 'PR Cockpit is installed through Nix; update the flake input instead.' >&2
+      exit 2
+    fi
+    for arg; do
+      if [[ $arg == --use-as-proxy || $arg == --use-as-proxy=* ]]; then
+        echo 'SSH replica mode is not included in this package.' >&2
+        exit 2
+      fi
+    done
+    exec bash "$app/scripts/pr-cockpit" "$@"
+    ;;
+  server)
+    mkdir -p "$COCKPIT_DATA_DIR"
+    cd "$app"
+    exec bun server/main.ts "$@"
+    ;;
+  desktop)
+    mkdir -p "$COCKPIT_DATA_DIR"
+    healthy() { curl --noproxy '*' -fsS --max-time 1 "$COCKPIT_URL/healthz" >/dev/null 2>&1; }
+    if healthy; then
+      exec "$COCKPIT_ELECTRON" "$app/shell" "$@"
+    fi
+    (cd "$app" && exec bun server/main.ts) >>"$COCKPIT_DATA_DIR/desktop-server.log" 2>&1 &
+    server_pid=$!
+    cleanup() { kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; }
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    for ((attempt=0; attempt<100; attempt++)); do
+      if healthy; then
+        "$COCKPIT_ELECTRON" "$app/shell" "$@"
+        exit
+      fi
+      if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    echo "PR Cockpit backend failed to start; see $COCKPIT_DATA_DIR/desktop-server.log" >&2
+    exit 1
+    ;;
+  *) exit 2 ;;
+esac

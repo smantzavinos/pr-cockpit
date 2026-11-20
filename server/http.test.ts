@@ -2196,6 +2196,24 @@ describe("PR file edits", () => {
     });
   });
 
+  test("onboarding accepts an existing GitHub CLI login without workflow scope", async () => {
+    const fetchHandler = buildFetchHandler(4820, {
+      githubAuthStatus: async (scopes) => {
+        const missingScopes = (scopes ?? []).filter((scope) => scope !== "repo");
+        return {
+          ok: missingScopes.length === 0,
+          state: missingScopes.length ? "missing-scopes" : "ready",
+          login: "octocat",
+          error: missingScopes.length ? "Allow workflow access." : null,
+          requiredScopes: [...(scopes ?? [])],
+          missingScopes,
+        };
+      },
+    });
+    const response = await fetchHandler(new Request("http://127.0.0.1:4820/api/auth/status"));
+    expect(await response.json()).toMatchObject({ ok: true, requiredScopes: ["repo"], missingScopes: [] });
+  });
+
   test("starts GitHub setup with only allowed requested scopes", async () => {
     let requestedScopes: readonly string[] = [];
     const auth = {

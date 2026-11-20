@@ -55,6 +55,7 @@ async function git(
 const MIRROR_STALL_SECONDS = 60;
 
 function githubRemote(repo: string): string {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error("Expected a GitHub owner/repository");
   return `https://github.com/${repo}.git`;
 }
 
@@ -70,6 +71,10 @@ async function authedGit(repo: string, args: string[]): Promise<{ ok: boolean; s
     // rewrite outranks any shorter user rewrite.
     "-c",
     "credential.helper=",
+    "-c",
+    "http.followRedirects=false",
+    "-c",
+    "http.proxy=",
     "-c",
     `url.${remote}.insteadOf=${remote}`,
     ...args,
@@ -260,7 +265,7 @@ export function fetchMirror(repo: string, timeoutMs?: number): Promise<void> {
     await ensureMirror(repo);
     touch(repo);
     const dir = mirrorDir(repo);
-    const result = await authedGit(repo, ["--git-dir", dir, "fetch", "--no-auto-maintenance", "--prune", "origin", ...FETCH_REFSPECS]);
+    const result = await authedGit(repo, ["--git-dir", dir, "fetch", "--no-auto-maintenance", "--prune", githubRemote(repo), ...FETCH_REFSPECS]);
     if (!result.ok) throw mirrorFetchError("fetch", repo, result);
   });
   const ready = fetched.finally(() => inFlightFetch.delete(repo));

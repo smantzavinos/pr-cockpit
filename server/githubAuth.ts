@@ -1,7 +1,7 @@
 import { beginUnmeteredGithubCliOperation } from "./githubUsage.ts";
 import { trackStep } from "./usageStats.ts";
 
-const DEFAULT_SCOPES = ["repo", "workflow"] as const;
+const DEFAULT_SCOPES = ["repo"] as const;
 const ALLOWED_SCOPES: Record<string, true> = { repo: true, workflow: true };
 const GITHUB_DEVICE_URL = "https://github.com/login/device";
 const GH_INSTALL_URL = "https://cli.github.com/";
@@ -62,9 +62,13 @@ function missingStatus(state: Exclude<GithubAuthState, "ready" | "authorizing" |
   return { ok: false, state, login, error, requiredScopes, missingScopes };
 }
 
+function githubCliEnvironment() {
+  return { ...process.env, GH_HOST: "github.com", GH_NO_UPDATE_NOTIFIER: "1", GH_NO_EXTENSION_UPDATE_NOTIFIER: "1" };
+}
+
 async function runGh(args: string[]): Promise<{ code: number; stdout: string; stderr: string } | null> {
   try {
-    const proc = Bun.spawn([ghExecutable(), ...args], { env: process.env, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([ghExecutable(), ...args], { env: githubCliEnvironment(), stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([
       proc.exited,
       new Response(proc.stdout).text(),
@@ -164,7 +168,7 @@ async function authorizeGithub(initial: GithubAuthStatus): Promise<void> {
   let proc;
   try {
     proc = Bun.spawn([ghExecutable(), ...args], {
-      env: { ...process.env, GH_BROWSER: process.env.COCKPIT_GH_BROWSER || "/usr/bin/true", NO_COLOR: "1" },
+      env: { ...githubCliEnvironment(), GH_BROWSER: process.env.COCKPIT_GH_BROWSER || "/usr/bin/true", NO_COLOR: "1" },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

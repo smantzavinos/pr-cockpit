@@ -14,9 +14,40 @@ Cooking rows show **since ordered** in the inbox and compact PR overlays, measur
 
 The PR header shows **Ordered** while an open PR has the `order` label; merged and closed states take precedence.
 
-## Install
+## GitHub-only development build
 
-Run this in your terminal as your normal user, **not with `sudo`**:
+Use this checkout with `scripts/dev`. It keeps GitHub polling and review actions, without the upstream hosted relay, usage reporting, crash reporting, update checks, or cloud-agent launches. GitHub may redirect some Actions logs and PR attachments to third-party storage. The fork intentionally does not download those URLs. Open them on GitHub if you choose to use a browser outside Cockpit.
+
+### Install with Nix on Linux
+
+Build and launch with `nix run .` from this checkout, or install the default flake package through Home Manager. The package includes a **PR Cockpit** desktop menu entry and three commands:
+
+- `pr-cockpit-desktop` opens the desktop app and starts a backend if one is not already running on its port. A backend started by this launcher stops when it closes.
+- `pr-cockpit-server` runs the backend in the foreground; open `http://127.0.0.1:4898/` in your browser.
+- `pr-cockpit owner/repo#123` reads a PR from a running backend. Use `--help` for review commands.
+
+The packaged instance defaults to port `4898` and `$XDG_DATA_HOME/pr-cockpit-nix` (or `~/.local/share/pr-cockpit-nix`), separate from the dev instance. Override with `COCKPIT_PORT` and `COCKPIT_DATA_DIR`. The UI is built at install time; launches do not install dependencies or update the app. Update the Nix input to upgrade. See the [network audit](docs/github-only-network-audit.md) for the limits of the application-level GitHub allowlist.
+
+### Development with Nix
+
+```sh
+nix develop                 # or nix develop .#headless for server, UI, and tests only
+scripts/dev deps            # install locked dependencies (this step can use the network)
+scripts/dev build           # build the UI into static/
+scripts/dev server          # leave this running
+```
+
+Open `http://127.0.0.1:4899/`, or run `scripts/dev desktop` from a second dev shell. For hot reload, run `scripts/dev ui` in the second shell instead and open the Vite URL it prints. `scripts/dev test <path>` runs targeted Bun tests.
+
+Cockpit uses your active `gh` login for `github.com`; no separate Cockpit account or GitHub App is needed. Check the identity with `gh auth status --hostname github.com` in the dev shell before starting. Nix supplies its own `gh` binary, but it reads the same `gh` configuration unless you set `GH_CONFIG_DIR`. To use another executable, set `COCKPIT_GH_BIN` to its absolute path. Normal review does not need `workflow` scope; Cockpit can ask for it separately if you edit a GitHub Actions workflow file.
+
+The dev server defaults to port `4899` and `.scratch/dev-data` (override with `COCKPIT_PORT` and `COCKPIT_DATA_DIR`). It does not install a system service or a desktop launcher. The flake supports x86-64 and ARM64 Linux, and Apple Silicon macOS. Linux uses Electron from the flake; macOS uses the pinned Electron dependency installed by `scripts/dev deps`, with Xcode Command Line Tools for the native bridges. The first Nix shell entry may fetch tools; ordinary launches do not run the dependency installer.
+
+## Upstream installer (not for this fork)
+
+The command below installs **upstream**, not this fork. It does not enforce the GitHub-only policy. Use the Nix workflow above instead.
+
+Upstream's installation command is:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/theolundqvist/pr-cockpit/main/scripts/bootstrap | bash

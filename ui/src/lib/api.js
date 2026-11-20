@@ -450,7 +450,7 @@ export async function searchPrs(q) {
   if (!res.ok) throw new Error(`search ${res.status}`);
   return (await res.json()).results;
 }
-export async function fetchAuthStatus(scopes = ["repo", "workflow"]) {
+export async function fetchAuthStatus(scopes = ["repo"]) {
   const params = new URLSearchParams({ scopes: scopes.join(",") });
   const res = await fetch(`/api/auth/status?${params}`);
   if (!res.ok) throw new Error(`auth status ${res.status}`);

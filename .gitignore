@@ -2,6 +2,8 @@ data/
 data.pre-incident/
 node_modules/
 static/
+.scratch/
+/.direnv/
 shell/PR Cockpit.app/
 shell/native/build/
 artifacts/views/

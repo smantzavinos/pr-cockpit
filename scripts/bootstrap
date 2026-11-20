@@ -47,7 +47,8 @@ run() {
 # Install counts, described in the README's "Usage statistics": the step this run reached, the OS
 # family and a random id for the run, which the app's first launch reports too so an install links to
 # its run. COCKPIT_USAGE_STATS=0 or DO_NOT_TRACK=1 turns them off; a dry run never reports.
-stats_url="${COCKPIT_RELAY_URL-https://relay.prcockpit.com}"
+# The fork never reports installer usage, including when a legacy relay is configured.
+stats_url=""
 stats_run=""
 stats_stage=prerequisites
 case "$(uname -s)" in

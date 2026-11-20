@@ -10,7 +10,7 @@ const bootRev = process.env.COCKPIT_RELEASE_REVISION
   || (git ? Bun.spawnSync([git, "rev-parse", "HEAD"], { cwd: repoRoot }).stdout.toString().trim() : "");
 
 export function updatesEnabled(): boolean {
-  return process.env.COCKPIT_UPDATE_DISABLED !== "1";
+  return false;
 }
 
 export async function checkForUpdate(): Promise<void> {

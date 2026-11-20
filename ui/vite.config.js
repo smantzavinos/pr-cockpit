@@ -14,7 +14,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:4820",
+      "/api": { target: `http://127.0.0.1:${process.env.COCKPIT_PORT || 4820}`, ws: true },
     },
   },
 });

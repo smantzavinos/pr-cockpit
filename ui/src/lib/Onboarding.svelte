@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { fetchAuthStatus, fetchOnboardingRepos, fetchRelayCoverage, fetchSettings, refreshInbox, saveSettings } from "./api.js";
+  import { fetchAuthStatus, fetchOnboardingRepos, fetchSettings, refreshInbox, saveSettings } from "./api.js";
   import { relativeTime } from "./time.js";
   import Kbd from "./Kbd.svelte";
   import GithubSetupModal from "./GithubSetupModal.svelte";
@@ -10,8 +10,6 @@
   let { onDone, onCancel = null } = $props();
 
   const MANUAL_RE = /^[\w.-]+\/[\w.-]+$/;
-  const COVERAGE_POLL_MS = 3000;
-  const COVERAGE_POLL_LIMIT = 40;
 
   let step = $state("choose");
   $effect(() => showScreen(`onboarding/${step}`, 1));
@@ -29,11 +27,6 @@
   let chosen = $state([]);
   let manualInput = $state("");
   let manualError = $state(null);
-  let coverage = $state(null);
-  let coverageState = $state("idle");
-  let coverageError = $state(null);
-  let coverageTimer = null;
-  let coverageRequest = 0;
   let active = true;
   let syncState = $state("idle");
   let syncError = $state(null);
@@ -43,16 +36,11 @@
   let busy = $derived(syncState === "saving" || syncState === "syncing");
   let filteredRepos = $derived(repos.filter((repo) => repo.nameWithOwner.toLowerCase().includes(filter.trim().toLowerCase())));
   let extraRepos = $derived(chosen.filter((name) => !repos.some((repo) => repo.nameWithOwner.toLowerCase() === name.toLowerCase())));
-  let coveredCount = $derived(chosen.filter((repo) => coverage?.repos?.[repo] === true).length);
-  let coverageConfirmed = $derived(chosen.length > 0 && coveredCount === chosen.length);
 
   onMount(() => {
     void loadSettings();
     void checkAuth();
-    return () => {
-      active = false;
-      stopCoveragePolling();
-    };
+    return () => { active = false; };
   });
 
   function isChosen(name) {
@@ -84,7 +72,7 @@
       auth = result;
       if (auth.ok && !reposLoaded) void loadRepos();
     } catch (error) {
-      if (active) auth = { ok: false, state: "error", error: error.message, requiredScopes: ["repo", "workflow"] };
+      if (active) auth = { ok: false, state: "error", error: error.message, requiredScopes: ["repo"] };
     } finally {
       if (active) authLoading = false;
     }
@@ -129,60 +117,6 @@
     manualError = null;
   }
 
-  function stopCoveragePolling() {
-    coverageRequest += 1;
-    clearTimeout(coverageTimer);
-    coverageTimer = null;
-  }
-
-  async function checkCoverage(watch = false) {
-    stopCoveragePolling();
-    const request = coverageRequest;
-    const selection = [...chosen];
-    let attempts = 0;
-    coverageState = watch ? "polling" : "checking";
-    coverageError = null;
-    const current = () => active && step === "review" && request === coverageRequest && syncState === "idle";
-    async function check() {
-      attempts += 1;
-      try {
-        const result = await fetchRelayCoverage(selection);
-        if (!current()) return;
-        coverage = result;
-        if (!result.repos) {
-          coverageState = "failed";
-          coverageError = "Live-update coverage is unavailable. You can still import your inbox.";
-        } else if (selection.every((repo) => result.repos[repo] === true)) {
-          coverageState = "confirmed";
-          coverageError = null;
-          return;
-        } else {
-          coverageState = "ready";
-          coverageError = null;
-        }
-      } catch (error) {
-        if (!current()) return;
-        coverageState = "failed";
-        coverageError = error.message;
-      }
-      if (!watch) return;
-      if (attempts >= COVERAGE_POLL_LIMIT) {
-        coverageState = "failed";
-        coverageError = "Installation has not been confirmed. Check again, or import now without live updates.";
-        return;
-      }
-      coverageState = "polling";
-      coverageTimer = setTimeout(check, COVERAGE_POLL_MS);
-    }
-    await check();
-  }
-
-  function installApp() {
-    if (!coverage?.installUrl) return;
-    window.open(coverage.installUrl, "_blank", "noopener");
-    void checkCoverage(true);
-  }
-
   function review() {
     if (authLoading || !auth?.ok || settingsState !== "ready") return;
     // Do not silently discard a repository typed without pressing Add.
@@ -195,13 +129,10 @@
     syncState = "idle";
     syncError = null;
     settingsSaved = false;
-    coverage = null;
-    void checkCoverage();
   }
 
   function back() {
     if (busy) return;
-    stopCoveragePolling();
     step = "choose";
     syncState = "idle";
     syncError = null;
@@ -210,13 +141,11 @@
   function cancel() {
     if (busy || !onCancel) return;
     active = false;
-    stopCoveragePolling();
     onCancel();
   }
 
   async function beginSync() {
     if (busy || !chosen.length || !auth?.ok || settingsState !== "ready") return;
-    stopCoveragePolling();
     const selection = [...chosen];
     syncError = null;
     syncState = settingsSaved ? "syncing" : "saving";
@@ -239,7 +168,6 @@
   function finish() {
     if (!active || syncState !== "complete") return;
     active = false;
-    stopCoveragePolling();
     onDone();
   }
 
@@ -290,7 +218,7 @@
         {/if}
       </div>
       {#if !authLoading && !auth?.ok}
-        <details class="permission-details"><summary>What access does Cockpit need?</summary><p>GitHub CLI handles sign-in for the app. GitHub's <code>repo</code> permission lets Cockpit read repositories and carry out your PR actions; <code>workflow</code> supports workflow-file changes. These permissions are broader than your inbox selection. You choose what Cockpit tracks next.</p></details>
+        <details class="permission-details"><summary>What access does Cockpit need?</summary><p>GitHub CLI handles sign-in for the app. GitHub's <code>repo</code> permission lets Cockpit read repositories and carry out your PR actions. It is broader than your inbox selection. Cockpit only asks for <code>workflow</code> if a workflow-file change needs it. You choose what Cockpit tracks next.</p></details>
       {/if}
 
       {#if settingsState === "loading"}
@@ -334,27 +262,8 @@
 
       {#if syncState === "idle"}
         <p class="inbox-copy">Your inbox starts with open PRs involving you in these repositories—not every PR in the organization.</p>
-        <section class="live-section" aria-label="Optional live updates">
-          <div class="section-heading"><h2>Live updates</h2><span class="optional">Optional</span></div>
-          <p>Get GitHub changes through the relay as they happen. Without it, Cockpit checks periodically instead.</p>
-          <div class="coverage-status" aria-live="polite">
-            {#if coverageConfirmed}<span class="status-dot" aria-hidden="true"></span><span>GitHub App coverage confirmed for your selection.</span>
-            {:else if coverageState === "checking"}<span class="spinner" aria-hidden="true"></span><span>Checking GitHub App coverage…</span>
-            {:else if coverageState === "polling"}<span class="spinner" aria-hidden="true"></span><span>Waiting for installation. Return here after choosing repositories on GitHub.</span>
-            {:else if coverageError}<span>{coverageError}</span>
-            {:else}<span>{coveredCount ? `${coveredCount} of ${chosen.length} repositories covered.` : "Not enabled for these repositories yet."}</span>{/if}
-          </div>
-          {#if !coverageConfirmed}
-            <div class="live-actions">
-              {#if coverage?.installUrl}<button class="secondary" type="button" onclick={installApp}>Set up on GitHub <span aria-hidden="true">↗</span></button>{/if}
-              <button class="link-button" type="button" disabled={coverageState === "checking"} onclick={() => checkCoverage()}>Check again</button>
-            </div>
-            <p class="small-copy">Install the GitHub App for the repositories you choose. An organization may require an owner's approval. This is separate from signing in.</p>
-          {/if}
-          <a class="source-link" href="https://github.com/theolundqvist/pr-cockpit/tree/main/relay-server" target="_blank" rel="noreferrer">How the relay works <span aria-hidden="true">↗</span></a>
-        </section>
-        <div class="actions"><button class="secondary back-button" type="button" onclick={back}>Back <Kbd keys="esc" /></button><button class="primary" type="submit">{coverageConfirmed ? "Build my inbox" : "Import now"} <span aria-hidden="true">→</span></button></div>
-        {#if !coverageConfirmed}<p class="footer-note">No need to wait for live updates. You can set them up later in Settings.</p>{/if}
+        <p class="inbox-copy">Cockpit checks for updates directly on GitHub. No relay or GitHub App setup is required.</p>
+        <div class="actions"><button class="secondary back-button" type="button" onclick={back}>Back <Kbd keys="esc" /></button><button class="primary" type="submit">Import now <span aria-hidden="true">→</span></button></div>
       {:else}
         <div class="sync-list" aria-live="polite" aria-busy={busy}>
           <div class:complete={settingsSaved}><span class:spinner={syncState === "saving"} aria-hidden="true">{syncState === "saving" ? "" : settingsSaved ? "✓" : "·"}</span><span>{settingsSaved ? "Repository choices saved" : syncState === "saving" ? "Saving repository choices…" : "Repository choices not saved"}</span></div>
@@ -437,13 +346,7 @@
   .chosen-repos { display: flex; flex-wrap: wrap; gap: 7px; max-height: 130px; overflow-y: auto; }
   .chosen-repos span { padding: 4px 7px; border-radius: 4px; background: var(--surface); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
   .inbox-copy { color: var(--text-dim); font-size: 13px; margin: 18px 0; }
-  .live-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
-  .live-section p { font-size: 12px; color: var(--text-dim); margin: 0 0 14px; }
-  .optional { border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; }
-  .coverage-status { display: flex; align-items: center; gap: 9px; min-height: 24px; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
-  .live-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 12px 0; }
-  .live-section .small-copy { font-size: 11px; color: var(--text-faint); }
-  .source-link, .notice a { color: var(--link); font-size: 11px; text-decoration: none; }
+  .notice a { color: var(--link); font-size: 11px; text-decoration: none; }
   a:hover { text-decoration: underline; }
   .footer-note { font-size: 11px; color: var(--text-faint); text-align: center; margin: 14px 0 0; }
   .sync-list { display: grid; gap: 16px; margin-top: 24px; padding: 18px 0; }
